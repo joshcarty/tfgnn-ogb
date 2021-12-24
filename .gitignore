@@ -1,0 +1,9 @@
+dataset
+data
+.vscode
+.mypy_cache
+.env
+__pycache__
+*.pyc
+.DS_Store
+tensorflow_gnn
