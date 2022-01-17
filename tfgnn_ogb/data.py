@@ -1,28 +1,14 @@
 """
 Load Open Graph Benchmark data as GraphTensors and TensorFlow Datasets.
 
-GraphTensors are created by sampling the neighbours of each classification
+GraphTensors are created by sampling the neighbourhoods of each classification
 node using NetworkX. Each node to be classified is stored as a separate
-GraphTensor comprising of it and its n neighbours. The number of neighbours
+GraphTensor comprising of it and its n neighbourhoods. The number of neighbourhoods
 to sample is a chosen parameter.
-
-Sampling a node's immediate neighbourhood and is relatively fast. You can
-lazily load them to a tf.data.Dataset at training time with the
-`load_dataset_from_graph` function. The GraphTensors are then cached in
-memory making subsequent epochs very fast.
-
-Sampling more than an node's immediate neighbours is slow and consumes a lot
-pof memory. It is best treated as a preprocessing step. You can use
-`generate_graph_samples` with the `write_graph_tensors_to_examples` function
-to write the TFRecords to disk and the `load_dataset_from_examples` function
-to load them as a tf.data.Dataset.
-
-For reference, sampling 2 hop neighbourhoods for ogbn-arxiv took 6h24 for the
-training set and 6h10 for the validation set on a 2018 MacBook Pro. The resulting
-TFRecords were 83GB and 85GB respectively.
 """
-
-from typing import Any, Generator, Iterator, List, Sequence, Tuple
+from dataclasses import dataclass
+import random
+from typing import Any, Generator, Iterator, List, Sequence, Tuple, Set
 
 import networkx as nx
 import numpy as np
@@ -56,6 +42,53 @@ def ogb_as_networkx_graph(name: str) -> nx.Graph:
     return graph, splits, num_classes
 
 
+@dataclass
+class NodeSampler:
+    graph: nx.Graph
+    neighbour_samples: Tuple[int, ...] = (10, 2)
+
+    @property
+    def num_neighbourhoods(self) -> int:
+        return len(self.neighbour_samples)
+
+    def sample(self, seed_node: int) -> nx.Graph:
+        sampled_nodes = {seed_node}
+        to_sample = sampled_nodes.copy()
+        for num_neighbours in self.neighbour_samples:
+
+            for node in to_sample:
+                neighbourhood_nodes = self.gather_neighbourhood(
+                    node, exclude_nodes=sampled_nodes
+                )
+                if not neighbourhood_nodes:
+                    continue
+                sampled_neighbourhood_nodes = self.sample_neighbourhood(
+                    neighbourhood_nodes, num_neighbours
+                )
+                sampled_nodes.update(sampled_neighbourhood_nodes)
+
+            to_sample = sampled_neighbourhood_nodes.copy()
+
+        return self.graph.subgraph(sampled_nodes)
+
+    def gather_neighbourhood(self, node: int, exclude_nodes: set[int]) -> set[int]:
+        neighbourhood_nodes = set(self.graph.neighbors(node))
+        neighbourhood_nodes = self.exclude_already_sampled_nodes(
+            neighbourhood_nodes, exclude_nodes
+        )
+        return neighbourhood_nodes
+
+    @staticmethod
+    def exclude_already_sampled_nodes(
+        neighbourhood_nodes: Set[int], sampled_nodes: Set[int]
+    ) -> set[int]:
+        return neighbourhood_nodes - sampled_nodes
+
+    @staticmethod
+    def sample_neighbourhood(nodes: Set[int], num_neighbours: int) -> Set[int]:
+        return set(random.choices(list(nodes), k=num_neighbours))
+
+
 def _prepare_data_for_node_classification(
     graph: nx.Graph, seed_node: int
 ) -> List[Tuple[Any, Any]]:
@@ -77,7 +110,7 @@ def _prepare_data_for_node_classification(
 
 
 def generate_graph_samples(
-    graph: nx.Graph, seed_nodes: Sequence[int], neighbours: int = 2
+    graph: nx.Graph, seed_nodes: Sequence[int], sampler: NodeSampler
 ) -> Iterator[tfgnn.GraphTensor]:
     """
     Lazily samples subgraphs from a NetworkX graph and converts them to
@@ -88,7 +121,7 @@ def generate_graph_samples(
     tf.Examples.
     """
     for seed_node in seed_nodes:
-        subgraph = nx.ego_graph(graph, seed_node, radius=neighbours)
+        subgraph = sampler.sample(seed_node)
         subgraph = nx.convert_node_labels_to_integers(
             subgraph, label_attribute="graph_index"
         )
@@ -121,8 +154,12 @@ def generate_graph_samples(
             sizes=[num_nodes],
         )
 
+        context = tfgnn.Context.from_fields(features=None)
+
         graph_tensor = tfgnn.GraphTensor.from_pieces(
-            edge_sets={"cites": edges}, node_sets={"paper": nodes}
+            edge_sets={"cites": edges},
+            node_sets={"paper": nodes},
+            context=context,
         )
 
         yield graph_tensor
@@ -136,20 +173,22 @@ def merge_graph_batches(graph: tfgnn.GraphTensor) -> tfgnn.GraphTensor:
 def load_dataset_from_graph(
     graph: nx.Graph,
     split: Sequence[int],
-    neighbours: int,
+    sampler: NodeSampler,
     batch_size: int,
     graph_type_spec: tfgnn.GraphTensorSpec,
 ) -> tf.data.Dataset:
     """
     Load a TensorFlow Dataset sampled as ego subgraphs from a NetworkX graph.
     
-    Only suitable for small graphs or very low neighbourhood sizes e.g. neighbours=1.
-    Since the Dataset is small and sampling is slow, we cache the data in memory.
+    Only suitable for small graphs or very low neighbourhood sizes. Since the
+    Dataset is small, we can cache the data in memory. For larger neighbourhood
+    sizes, it's preferable to write examples to disk using `main` and loading
+    with `load_dataset_from_examples`.
     """
 
     def generator() -> Generator[tfgnn.GraphTensor, None, None]:
         """tf.data.Dataset expects a Callable that returns a Generator."""
-        samples = generate_graph_samples(graph, split, neighbours=neighbours)
+        samples = generate_graph_samples(graph, split, sampler=sampler)
         yield from samples
 
     dataset = tf.data.Dataset.from_generator(
@@ -189,18 +228,20 @@ def write_graph_tensors_to_examples(
 
 def main() -> None:
     dataset = "ogbn-arxiv"
-    neighbours = 1
+    neighbour_samples = (10, 2)
 
     graph, splits, _ = ogb_as_networkx_graph(dataset)
     train_split, val_split = splits["train"], splits["valid"]
+    sampler = NodeSampler(graph, neighbour_samples)
 
-    for split_name, split in (('train', train_split), ('val', val_split)):
-        generator = generate_graph_samples(graph, split, neighbours)
+    for split_name, split in (("train", train_split), ("val", val_split)):
+        generator = generate_graph_samples(graph, split, sampler)
+        filename = f"{split_name}_hop_{'-'.join(map(str, neighbour_samples))}.tfrecords"
         write_graph_tensors_to_examples(
-            graph_generator=tqdm(generator,total=len(split)),
-            path=f"data/{dataset}/{split_name}/{split_name}_hop_{neighbours}.tfrecords"
+            graph_generator=tqdm(generator, total=len(split)),
+            path=f"data/{dataset}/{split_name}/{filename}",
         )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

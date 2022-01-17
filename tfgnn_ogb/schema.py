@@ -7,6 +7,10 @@ these would be serialized as Protocol Buffers.
 Node features seemingly need to be called `hidden_state` to work correctly
 with the `tfgnn.keras.ConvGNNBuilder` layer. There is some discussion in the
 Issue here: https://github.com/tensorflow/gnn/issues/5.
+
+I also found that GraphTensors needed a context to work with
+`merge_batch_to_components`. I was getting an exception about an IndexError
+relating to self._data[_GraphPieceWithFeatures._DATAKEY_FEATURES].
 """
 import tensorflow as tf
 import tensorflow_gnn as tfgnn
@@ -15,7 +19,15 @@ TYPE_SPECS = {
     "ogbn-arxiv": tfgnn.GraphTensorSpec(
         {
             "context": tfgnn.ContextSpec(
-                {}, tf.TensorShape([]), tf.int32, None
+                {
+                    "features": {},
+                    "sizes": tf.TensorSpec(
+                        shape=(1,), dtype=tf.int32, name=None
+                    ),
+                },
+                tf.TensorShape([]),
+                tf.int32,
+                None,
             ),
             "node_sets": {
                 "paper": tfgnn.NodeSetSpec(
