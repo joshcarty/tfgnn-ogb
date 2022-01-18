@@ -11,8 +11,8 @@ class NodeClassificationModel(tf.keras.Model):
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        self.target_node = kwargs.pop("target_node", "paper")
-        self.label_name = kwargs.pop("label_name", "label")
+        self.target_node = kwargs.pop("target_node")
+        self.label_name = kwargs.pop("label_name")
         super().__init__(*args, **kwargs)
 
     def readout_labels(self, graph: tfgnn.GraphTensor) -> tf.Tensor:
