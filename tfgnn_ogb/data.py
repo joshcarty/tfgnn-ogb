@@ -72,8 +72,8 @@ class NodeSampler:
         return self.graph.subgraph(sampled_nodes)
 
     def gather_neighbourhood(
-        self, node: int, exclude_nodes: set[int]
-    ) -> set[int]:
+        self, node: int, exclude_nodes: Set[int]
+    ) -> Set[int]:
         neighbourhood_nodes = set(self.graph.neighbors(node))
         neighbourhood_nodes = self.exclude_already_sampled_nodes(
             neighbourhood_nodes, exclude_nodes
