@@ -1,7 +1,7 @@
 from typing import Any, Dict
 
-import tensorflow_gnn as tfgnn
 import tensorflow as tf
+import tensorflow_gnn as tfgnn
 
 
 class NodeClassificationModel(tf.keras.Model):

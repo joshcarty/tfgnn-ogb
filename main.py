@@ -1,7 +1,7 @@
 import tensorflow as tf
 import tensorflow_gnn as tfgnn
 
-from tfgnn_ogb import model, data
+from tfgnn_ogb import data, model
 from tfgnn_ogb.schema import TYPE_SPECS
 from tfgnn_ogb.utils import ceildiv
 

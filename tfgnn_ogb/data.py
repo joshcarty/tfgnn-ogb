@@ -6,14 +6,14 @@ node using NetworkX. Each node to be classified is stored as a separate
 GraphTensor comprising of it and its n neighbourhoods. The number of neighbourhoods
 to sample is a chosen parameter.
 """
-from dataclasses import dataclass
 import random
-from typing import Any, Generator, Iterator, List, Sequence, Tuple, Set
+from dataclasses import dataclass
+from typing import Any, Generator, Iterator, List, Sequence, Set, Tuple
 
 import networkx as nx
 import numpy as np
-import tensorflow_gnn as tfgnn
 import tensorflow as tf
+import tensorflow_gnn as tfgnn
 from ogb.nodeproppred import NodePropPredDataset
 from tqdm import tqdm
 
